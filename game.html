@@ -298,7 +298,8 @@
         <div><span class="key">W</span>顺时针旋转</div>
         <div><span class="key">Z</span>逆时针旋转</div>
         <div><span class="key">C</span>暂存</div>
-        <div><span class="key">U</span>撤销</div>
+        <div><span class="key">N</span>换块</div>
+        <div><span class="key">R</span>撤销</div>
         <div><span class="key">P</span>暂停</div>
       </div>
     </div>
@@ -575,6 +576,19 @@
       currentPiece = createPiece(type);
     }
     canHold = false;
+    lockTimer = 0;
+    lockResets = 0;
+  }
+
+  // Discard the current piece and pull the head of the NEXT queue, refilling
+  // the tail from the bag. The discarded piece is gone (not recycled).
+  function swapWithNext() {
+    if (!currentPiece || nextPieces.length === 0) return;
+    const newPiece = createPiece(nextPieces[0]);
+    if (collides(newPiece, 0, 0)) return;   // no room to swap in, abort
+    nextPieces.shift();
+    fillNextQueue();
+    currentPiece = newPiece;
     lockTimer = 0;
     lockResets = 0;
   }
@@ -959,12 +973,12 @@
     if (['ArrowLeft','ArrowRight','ArrowDown','ArrowUp',' '].includes(e.key)) {
       e.preventDefault();
     }
-    if (e.key.toLowerCase() === 'u') {   // undo works even after game over
+    if (e.key.toLowerCase() === 'r') {   // undo works even after game over
       if (!e.repeat && !isPaused) undo();
       return;
     }
     if (isGameOver) {
-      if (e.key === 'Enter' || e.key.toLowerCase() === 'r') restart();
+      if (e.key === 'Enter') restart();
       return;
     }
     if (e.key.toLowerCase() === 'p') {
@@ -999,6 +1013,7 @@
       case ' ': hardDrop(); break;
       case 'c': case 'C':
       case 'Shift': hold(); break;
+      case 'n': case 'N': swapWithNext(); break;
     }
   });
 
