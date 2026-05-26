@@ -8,10 +8,27 @@
     margin: 0;
     padding: 20px;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
+    gap: 14px;
     min-height: 100vh;
     user-select: none;
+  }
+
+  .piece-legend {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    max-width: 1000px;
+    margin-bottom: 24px;
+    opacity: 0.7;
+  }
+
+  .piece-legend canvas {
+    flex: 1;
+    min-width: 0;
   }
 
   .game-container {
@@ -235,6 +252,10 @@
   }
 </style>
 
+<div class="piece-legend">
+  <canvas id="pieces-canvas" width="800" height="60"></canvas>
+</div>
+
 <div class="game-container">
   <!-- Left panel -->
   <div class="side-panel">
@@ -299,6 +320,7 @@
         <div><span class="key">Z</span>逆时针旋转</div>
         <div><span class="key">C</span>暂存</div>
         <div><span class="key">N</span>换块</div>
+        <div><span class="key">1-7</span>指定方块</div>
         <div><span class="key">R</span>撤销</div>
         <div><span class="key">P</span>暂停</div>
       </div>
@@ -370,6 +392,8 @@
   const holdCtx = holdCanvas.getContext('2d');
   const nextCanvas = document.getElementById('next-canvas');
   const nextCtx = nextCanvas.getContext('2d');
+  const piecesCanvas = document.getElementById('pieces-canvas');
+  const piecesCtx = piecesCanvas.getContext('2d');
 
   let board, currentPiece, nextPieces, holdPiece, canHold;
   let score, level, lines, combo;
@@ -589,6 +613,26 @@
     nextPieces.shift();
     fillNextQueue();
     currentPiece = newPiece;
+    lockTimer = 0;
+    lockResets = 0;
+  }
+
+  // Keys 1-7 map to the seven piece types in this order.
+  const DIGIT_PIECES = ['I','O','T','S','Z','J','L'];
+
+  // Discard the current piece and replace it with the given type at a random
+  // rotation. The discarded piece is gone; the NEXT queue is untouched.
+  function replaceWithType(type) {
+    if (!currentPiece) return;
+    const rotation = Math.floor(Math.random() * 4);
+    const shape = PIECES[type][rotation];
+    const piece = {
+      type, shape, rotation,
+      x: Math.floor(COLS / 2) - Math.ceil(shape[0].length / 2),
+      y: type === 'I' ? -1 : 0
+    };
+    if (collides(piece, 0, 0)) return;   // no room to spawn it, abort
+    currentPiece = piece;
     lockTimer = 0;
     lockResets = 0;
   }
@@ -863,6 +907,24 @@
     nextCtx.globalAlpha = 1;
   }
 
+  // Static legend along the page bottom: 7 columns of "digit + piece shape".
+  function drawPiecesLegend() {
+    const c = piecesCtx, W = piecesCanvas.width, H = piecesCanvas.height;
+    c.clearRect(0, 0, W, H);   // transparent: blend into the page, no box
+    const colW = W / 7;
+    const block = Math.max(7, Math.min(Math.round(H * 0.30), Math.round(colW * 0.13)));
+    c.font = `bold ${Math.round(H * 0.42)}px 'Courier New', monospace`;
+    c.textBaseline = 'middle';
+    c.textAlign = 'left';
+    const cy = H / 2;
+    for (let i = 0; i < 7; i++) {
+      const x0 = colW * i;
+      c.fillStyle = '#ffaa44';
+      c.fillText(String(i + 1), x0 + colW * 0.08, cy);
+      drawMiniPiece(c, DIGIT_PIECES[i], x0 + colW * 0.66, cy, block);
+    }
+  }
+
   function updateUI() {
     document.getElementById('score').textContent = score.toLocaleString();
     document.getElementById('level').textContent = level;
@@ -1004,6 +1066,10 @@
       softDrop();
       return;
     }
+    if (e.key >= '1' && e.key <= '7') {
+      replaceWithType(DIGIT_PIECES[+e.key - 1]);
+      return;
+    }
 
     switch (e.key) {
       case 'ArrowUp':
@@ -1042,8 +1108,8 @@
   // Scale the whole layout to fill the viewport based on its height.
   function computeLayout() {
     const root = document.documentElement.style;
-    // Reserve room for body padding (20px top + bottom) around the board.
-    const avail = window.innerHeight - 48;
+    // Reserve room for body padding and the bottom legend row.
+    const avail = window.innerHeight - 48 - 96;
     CELL = Math.max(18, Math.min(56, Math.floor(avail / ROWS)));
 
     canvas.width = COLS * CELL;
@@ -1055,6 +1121,8 @@
     holdCanvas.height = Math.round(panelW * 0.56);
     nextCanvas.width = panelW;
     nextCanvas.height = Math.round(panelW * 1.7);
+    piecesCanvas.height = Math.round(CELL * 0.85);
+    piecesCanvas.width = Math.max(280, piecesCanvas.clientWidth);
     MINI = Math.round(CELL * 0.6);
 
     root.setProperty('--panel-w', panelW + 'px');
@@ -1063,6 +1131,7 @@
     root.setProperty('--stat-fs', Math.round(CELL * 0.82) + 'px');
     root.setProperty('--ctrl-fs', Math.round(CELL * 0.4) + 'px');
 
+    drawPiecesLegend();
     if (board) { draw(); drawHold(); drawNext(); }
   }
 
