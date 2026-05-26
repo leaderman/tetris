@@ -375,6 +375,20 @@
   let isPaused, isGameOver, bag;
   let clearAnimation = null;
 
+  // Lock delay: piece resting on the stack gets a short grace period during
+  // which it can still be moved/rotated before locking in place.
+  const LOCK_DELAY = 500;      // ms a grounded piece waits before locking
+  const MAX_LOCK_RESETS = 15;  // cap move/rotate resets to prevent stalling
+  let lockTimer = 0, lockResets = 0;
+
+  // DAS (delayed auto shift) / ARR (auto repeat rate): holding left/right or
+  // soft drop auto-repeats the action.
+  const DAS = 150;        // ms before auto-repeat kicks in
+  const ARR = 35;         // ms between repeats while held
+  const SOFT_ARR = 40;    // ms between soft-drop steps while held
+  let dasDir = 0, dasToken = null, dasTimer = 0, dasCharged = false;
+  let softDropHeld = false, softDropTimer = 0;
+
   function createBoard() {
     return Array.from({length: ROWS}, () => Array(COLS).fill(null));
   }
@@ -417,6 +431,8 @@
     fillNextQueue();
     currentPiece = createPiece(type);
     canHold = true;
+    lockTimer = 0;
+    lockResets = 0;
 
     if (collides(currentPiece, 0, 0)) {
       gameOver();
@@ -437,19 +453,31 @@
     return false;
   }
 
+  // Reset the lock timer when the player successfully acts on a grounded
+  // piece, up to a cap so a piece can't be stalled indefinitely.
+  function resetLockDelay() {
+    if (collides(currentPiece, 0, 1) && lockResets < MAX_LOCK_RESETS) {
+      lockTimer = 0;
+      lockResets++;
+    }
+  }
+
   function move(dx) {
     if (!collides(currentPiece, dx, 0)) {
       currentPiece.x += dx;
+      resetLockDelay();
+      return true;
     }
+    return false;
   }
 
   function softDrop() {
     if (!collides(currentPiece, 0, 1)) {
       currentPiece.y += 1;
       score += 1;
+      lockTimer = 0;
+      lockResets = 0;   // falling to a new row refreshes the reset budget
       updateUI();
-    } else {
-      lockPiece();
     }
     dropCounter = 0;
   }
@@ -475,6 +503,7 @@
         currentPiece.y += ky;
         currentPiece.rotation = newRot;
         currentPiece.shape = newShape;
+        resetLockDelay();
         return;
       }
     }
@@ -495,6 +524,8 @@
       currentPiece = createPiece(type);
     }
     canHold = false;
+    lockTimer = 0;
+    lockResets = 0;
   }
 
   function lockPiece() {
@@ -774,6 +805,23 @@
     document.getElementById('combo').textContent = Math.max(0, combo);
   }
 
+  // Auto-repeat held movement: DAS charge then ARR repeats for left/right,
+  // and a steady step rate for soft drop.
+  function handleAutoRepeat(dt) {
+    if (dasDir !== 0) {
+      dasTimer += dt;
+      if (!dasCharged) {
+        if (dasTimer >= DAS) { dasCharged = true; dasTimer -= DAS; move(dasDir); }
+      } else {
+        while (dasTimer >= ARR) { dasTimer -= ARR; move(dasDir); }
+      }
+    }
+    if (softDropHeld) {
+      softDropTimer += dt;
+      while (softDropTimer >= SOFT_ARR) { softDropTimer -= SOFT_ARR; softDrop(); }
+    }
+  }
+
   let rafId = null;
 
   function loop(time = 0) {
@@ -785,14 +833,25 @@
     lastTime = time;
 
     if (!clearAnimation) {
+      handleAutoRepeat(dt);
+
       dropCounter += dt;
       if (dropCounter > dropInterval) {
+        dropCounter = 0;
         if (!collides(currentPiece, 0, 1)) {
           currentPiece.y += 1;
-        } else {
+          lockResets = 0;   // gravity drop refreshes the reset budget
+        }
+      }
+
+      // Lock delay: only lock once the grace period elapses while grounded.
+      if (collides(currentPiece, 0, 1)) {
+        lockTimer += dt;
+        if (lockTimer >= LOCK_DELAY) {
           lockPiece();
         }
-        dropCounter = 0;
+      } else {
+        lockTimer = 0;
       }
     }
 
@@ -823,10 +882,25 @@
     isPaused = false;
     isGameOver = false;
     clearAnimation = null;
+    lockTimer = 0;
+    lockResets = 0;
+    dasDir = 0; dasToken = null; dasTimer = 0; dasCharged = false;
+    softDropHeld = false; softDropTimer = 0;
     document.getElementById('game-over-overlay').classList.remove('show');
     document.getElementById('pause-overlay').classList.remove('show');
     spawnPiece();
     updateUI();
+  }
+
+  // Map a key to a horizontal-move token so left/right auto-repeat tracking
+  // works the same for arrows and A/D.
+  function moveToken(key) {
+    if (key === 'ArrowLeft' || key === 'a' || key === 'A') return 'L';
+    if (key === 'ArrowRight' || key === 'd' || key === 'D') return 'R';
+    return null;
+  }
+  function isSoftDropKey(key) {
+    return key === 'ArrowDown' || key === 's' || key === 'S';
   }
 
   document.addEventListener('keydown', (e) => {
@@ -843,11 +917,25 @@
       return;
     }
     if (isPaused || clearAnimation) return;
+    if (e.repeat) return;   // ignore OS key-repeat; we drive DAS/ARR ourselves
+
+    const token = moveToken(e.key);
+    if (token) {
+      dasDir = token === 'L' ? -1 : 1;
+      dasToken = token;
+      dasTimer = 0;
+      dasCharged = false;
+      move(dasDir);
+      return;
+    }
+    if (isSoftDropKey(e.key)) {
+      softDropHeld = true;
+      softDropTimer = 0;
+      softDrop();
+      return;
+    }
 
     switch (e.key) {
-      case 'ArrowLeft':  case 'a': case 'A': move(-1); break;
-      case 'ArrowRight': case 'd': case 'D': move(1); break;
-      case 'ArrowDown':  case 's': case 'S': softDrop(); break;
       case 'ArrowUp':
       case 'w': case 'W':
       case 'x': case 'X': rotate(1); break;
@@ -856,6 +944,21 @@
       case 'c': case 'C':
       case 'Shift': hold(); break;
     }
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (moveToken(e.key) === dasToken && dasToken !== null) {
+      dasDir = 0;
+      dasToken = null;
+    }
+    if (isSoftDropKey(e.key)) {
+      softDropHeld = false;
+    }
+  });
+
+  // Clear held-key state if the window loses focus (we'd miss the keyup).
+  window.addEventListener('blur', () => {
+    dasDir = 0; dasToken = null; softDropHeld = false;
   });
 
   document.getElementById('restart-btn').addEventListener('click', restart);
