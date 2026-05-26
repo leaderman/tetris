@@ -298,6 +298,7 @@
         <div><span class="key">W</span>顺时针旋转</div>
         <div><span class="key">Z</span>逆时针旋转</div>
         <div><span class="key">C</span>暂存</div>
+        <div><span class="key">U</span>撤销</div>
         <div><span class="key">P</span>暂停</div>
       </div>
     </div>
@@ -389,6 +390,11 @@
   let dasDir = 0, dasToken = null, dasTimer = 0, dasCharged = false;
   let softDropHeld = false, softDropTimer = 0;
 
+  // Undo ("悔棋"): a snapshot of full game state is pushed each time a piece
+  // spawns, so the player can step back to the start of a previous turn.
+  let undoStack = [];
+  const MAX_UNDO = 100;
+
   function createBoard() {
     return Array.from({length: ROWS}, () => Array(COLS).fill(null));
   }
@@ -433,10 +439,55 @@
     canHold = true;
     lockTimer = 0;
     lockResets = 0;
+    pushUndo();
 
     if (collides(currentPiece, 0, 0)) {
       gameOver();
     }
+  }
+
+  function snapshotState() {
+    return {
+      board: board.map(r => r.slice()),
+      currentPiece: { ...currentPiece },
+      nextPieces: nextPieces.slice(),
+      bag: bag.slice(),
+      holdPiece, canHold,
+      score, level, lines, combo, dropInterval
+    };
+  }
+
+  function pushUndo() {
+    undoStack.push(snapshotState());
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+  }
+
+  // Step back to the start of the previous turn: drop the current turn's
+  // snapshot, then restore the one beneath it.
+  function undo() {
+    if (undoStack.length < 2) return;
+    undoStack.pop();
+    const snap = undoStack[undoStack.length - 1];
+
+    board = snap.board.map(r => r.slice());
+    currentPiece = { ...snap.currentPiece };
+    nextPieces = snap.nextPieces.slice();
+    bag = snap.bag.slice();
+    holdPiece = snap.holdPiece;
+    canHold = snap.canHold;
+    score = snap.score;
+    level = snap.level;
+    lines = snap.lines;
+    combo = snap.combo;
+    dropInterval = snap.dropInterval;
+
+    clearAnimation = null;
+    lockTimer = 0; lockResets = 0; dropCounter = 0;
+    dasDir = 0; dasToken = null; softDropHeld = false;
+    isGameOver = false;
+    lastTime = performance.now();   // avoid a huge dt after reviving
+    document.getElementById('game-over-overlay').classList.remove('show');
+    updateUI();
   }
 
   function collides(piece, dx, dy, shape) {
@@ -886,6 +937,7 @@
     lockResets = 0;
     dasDir = 0; dasToken = null; dasTimer = 0; dasCharged = false;
     softDropHeld = false; softDropTimer = 0;
+    undoStack = [];
     document.getElementById('game-over-overlay').classList.remove('show');
     document.getElementById('pause-overlay').classList.remove('show');
     spawnPiece();
@@ -906,6 +958,10 @@
   document.addEventListener('keydown', (e) => {
     if (['ArrowLeft','ArrowRight','ArrowDown','ArrowUp',' '].includes(e.key)) {
       e.preventDefault();
+    }
+    if (e.key.toLowerCase() === 'u') {   // undo works even after game over
+      if (!e.repeat && !isPaused) undo();
+      return;
     }
     if (isGameOver) {
       if (e.key === 'Enter' || e.key.toLowerCase() === 'r') restart();
