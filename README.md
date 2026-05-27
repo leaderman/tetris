@@ -2,6 +2,10 @@
 
 一个纯前端、零依赖的俄罗斯方块游戏，全部实现于单个 `game.html` 文件中（HTML + CSS + 原生 JavaScript + Canvas）。
 
+**在线体验：** https://gz8cnh635n.coze.site/
+
+![游戏截图](tetris.png)
+
 ## 运行
 
 直接用浏览器打开即可，无需安装任何依赖、无需构建：
